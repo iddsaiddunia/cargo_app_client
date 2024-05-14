@@ -1,7 +1,13 @@
 import 'package:cargo_app/nonAuth/siginup.dart';
+import 'package:cargo_app/services/auth.dart';
+import 'package:cargo_app/services/provider.dart';
 import 'package:cargo_app/widgets.dart';
 import 'package:cargo_app/wrapper.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+AuthService auth = AuthService();
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -17,54 +23,9 @@ class _LoginPageState extends State<LoginPage> {
   bool isLoading = false;
   int selectedIndex = 0;
 
-  Future<void> authenticateUser() async {
-    // Simulate a login request
-    setState(() {
-      isLoading = true;
-    });
-
-    await Future.delayed(Duration(seconds: 2)); // Simulate network delay
-
-    // Replace this with your actual authentication logic
-    if (emailController.text == 'user@mail.com' &&
-        passwordController.text == '1234') {
-      // Authentication successful, navigate to the next page
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => Wrapper(
-            isSignedIn: true,
-          ),
-        ),
-      );
-    } else {
-      // Authentication failed, show an error message
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: Text('Authentication Failed'),
-            content: Text('Invalid username or password.'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-                child: Text('OK'),
-              ),
-            ],
-          );
-        },
-      );
-    }
-
-    setState(() {
-      isLoading = false;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
     return Scaffold(
       body: Stack(
         children: [
@@ -113,7 +74,7 @@ class _LoginPageState extends State<LoginPage> {
                       title: "Login",
                       isLoading: isLoading,
                       press: () {
-                        authenticateUser();
+                        _logIn(userProvider);
                       },
                       isWithOnlyBorder: false,
                     ),
@@ -140,5 +101,53 @@ class _LoginPageState extends State<LoginPage> {
         ],
       ),
     );
+  }
+
+  _logIn(UserProvider userProvider) async {
+    // Simulate a login request
+    setState(() {
+      isLoading = true;
+    });
+
+    // await Future.delayed(Duration(seconds: 2));
+
+    // Replace this with your actual authentication logic
+    if (emailController.text != '' || passwordController.text != '') {
+      // Authentication successful, navigate to the next page
+      final user = await auth.signInUser(
+          emailController.text, passwordController.text, userProvider);
+      if (user != null) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => Wrapper(
+              isSignedIn: true,
+            ),
+          ),
+        );
+        setState(() {
+          isLoading = false;
+        });
+      }
+    } else {
+      // Authentication failed, show an error message
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text('Authentication Failed'),
+            content: Text('Invalid username or password.'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+    }
   }
 }

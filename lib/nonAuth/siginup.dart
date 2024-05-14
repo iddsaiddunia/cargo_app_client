@@ -1,5 +1,10 @@
+import 'package:cargo_app/nonAuth/login.dart';
+import 'package:cargo_app/services/auth.dart';
 import 'package:cargo_app/widgets.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+
+AuthService auth = new AuthService();
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -16,6 +21,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
   TextEditingController phoneController = TextEditingController();
   TextEditingController passwordController = TextEditingController();
   TextEditingController verifyController = TextEditingController();
+
+  @override
+  // void dispose(){
+  //   // super.init()
+  // }
 
   @override
   Widget build(BuildContext context) {
@@ -68,7 +78,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                     CustomePrimaryButton(
                       title: "Sign up",
                       isLoading: isLoading,
-                      press: () {},
+                      press: _signUp,
                       isWithOnlyBorder: false,
                     ),
                     const SizedBox(
@@ -90,5 +100,28 @@ class _RegistrationPageState extends State<RegistrationPage> {
         ],
       ),
     );
+  }
+
+  _signUp() async {
+    setState(() {
+      isLoading = true;
+    });
+    final user =
+        await auth.createNewUser(emailController.text, passwordController.text);
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('clients').doc(user.uid).set({
+        'username': usernameController.text.trim(),
+        'phone': phoneController.text.trim(),
+      });
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => LoginPage(),
+        ),
+      );
+      setState(() {
+        isLoading = false;
+      });
+    }
   }
 }

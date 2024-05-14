@@ -16,12 +16,15 @@ class BottomBorderInputField extends StatelessWidget {
       width: double.infinity,
       child: TextField(
         controller: controller,
+        
         decoration: InputDecoration(
           hintText: title,
           border: const UnderlineInputBorder(
             borderSide: BorderSide(color: Colors.blue, width: 9),
           ),
+
         ),
+
       ),
     );
   }
