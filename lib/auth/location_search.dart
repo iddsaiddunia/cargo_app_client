@@ -1,102 +1,73 @@
-import 'package:cargo_app/services/provider.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:google_place/google_place.dart';
+import 'package:google_places_flutter/google_places_flutter.dart';
 
-class Location {
-  final String name;
-  final String address;
-
-  Location({required this.name, required this.address});
+class SearchPage extends StatefulWidget {
+  @override
+  _SearchPageState createState() => _SearchPageState();
 }
 
-class LocationSearchPage extends StatefulWidget {
-  const LocationSearchPage({super.key});
+class _SearchPageState extends State<SearchPage> {
+  TextEditingController _searchController = TextEditingController();
+  bool _isDisposed = false;
 
   @override
-  State<LocationSearchPage> createState() => _LocationSearchPageState();
-}
-
-class _LocationSearchPageState extends State<LocationSearchPage> {
-  final TextEditingController _searchController = TextEditingController();
-  List<Location> _searchResults = [];
-
-  void _performSearch(String query) {
-    // Perform search operation (e.g., querying a database or an API)
-    // For demonstration, we'll populate some dummy search results
-    List<Location> results = [
-      Location(name: 'Location 1', address: 'Address 1'),
-      Location(name: 'Location 2', address: 'Address 2'),
-      Location(name: 'Location 3', address: 'Address 3'),
-    ];
-
-    setState(() {
-      _searchResults = results;
-    });
+  void dispose() {
+    _searchController.dispose();
+    _isDisposed = true;
+    super.dispose();
   }
-
-  void _selectLocation(Location location) {
-    // Handle selection of the location (e.g., pass it to another page)
-    // For demonstration, we'll just print the selected location
-    print('Selected location: ${location.name}');
-  }
-
-  // @override
-  // void dispose() {
-  //   super.dispose();
-  //   // _searchController.dispose();
-  // }
 
   @override
   Widget build(BuildContext context) {
-    final destinationProvider =
-        Provider.of<DestinationProvider>(context, listen: false);
-        
     return Scaffold(
-      body: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.all(16.0),
-            child: SafeArea(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(
-                    width: 1,
-                    color: const Color.fromARGB(255, 170, 170, 170),
-                  ),
-                  borderRadius: const BorderRadius.all(Radius.circular(4)),
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                      hintText: 'Search for a location...',
-                      prefixIcon: Icon(Icons.search),
-                      border: InputBorder.none),
-                  onChanged: (query) {
-                    // Perform search based on the query
-                    _performSearch(query);
-                  },
-                ),
-              ),
+      appBar: AppBar(
+          // title: Text('Search Location'),
+          ),
+      body: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: GooglePlaceAutoCompleteTextField(
+          textEditingController: _searchController,
+          googleAPIKey: "AIzaSyAjsJbodhou5nNntMWPdhRsWqz2h1Tgzoc",
+          inputDecoration: InputDecoration(
+            hintText: 'Search places...',
+            prefixIcon: const Icon(Icons.search),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8.0),
             ),
           ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _searchResults.length,
-              itemBuilder: (context, index) {
-                return ListTile(
-                  title: Text(_searchResults[index].name),
-                  subtitle: Text(_searchResults[index].address),
-                  onTap: () {
-                    destinationProvider.setDestination(_searchResults[index].name);
-                    _selectLocation(_searchResults[index]);
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+          debounceTime: 800,
+          countries: const ["tz"],
+          isLatLngRequired: true,
+          getPlaceDetailWithLatLng: (prediction) {
+            final placeId = prediction.placeId;
+            if (placeId != null && !_isDisposed) {
+              _selectPlace(placeId);
+            }
+          },
+          itemClick: (prediction) {
+            final placeId = prediction.placeId;
+            if (placeId != null && !_isDisposed) {
+              _selectPlace(placeId);
+            }
+          },
+        ),
       ),
     );
+  }
+
+  Future<void> _selectPlace(String placeId) async {
+    var placeDetails =
+        await GooglePlace('AIzaSyAjsJbodhou5nNntMWPdhRsWqz2h1Tgzoc')
+            .details
+            .get(placeId);
+    if (!_isDisposed && placeDetails != null && placeDetails.result != null) {
+      var place = placeDetails.result!;
+
+      if (mounted) {
+        Navigator.pop(context, place.formattedAddress);
+      }
+    }
   }
 }

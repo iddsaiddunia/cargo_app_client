@@ -6,25 +6,28 @@ import 'package:flutter/widgets.dart';
 
 class BottomBorderInputField extends StatelessWidget {
   final String title;
+  final bool isPasswordInput;
   final TextEditingController controller;
-  const BottomBorderInputField(
-      {super.key, required this.title, required this.controller});
+  const BottomBorderInputField({
+    super.key,
+    required this.title,
+    required this.isPasswordInput,
+    required this.controller,
+  });
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
       child: TextField(
+        obscureText: isPasswordInput,
         controller: controller,
-        
         decoration: InputDecoration(
           hintText: title,
           border: const UnderlineInputBorder(
             borderSide: BorderSide(color: Colors.blue, width: 9),
           ),
-
         ),
-
       ),
     );
   }
@@ -106,22 +109,25 @@ class MenuButton extends StatelessWidget {
 class LocationInputField extends StatelessWidget {
   final String title;
   final TextEditingController controller;
-  const LocationInputField({
-    super.key,
-    required this.title,
-    required this.controller
-  });
+  final Function()? ontap;
+  const LocationInputField(
+      {super.key,
+      required this.title,
+      required this.controller,
+      required this.ontap});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: MediaQuery.of(context).size.width/1.2,
+      width: MediaQuery.of(context).size.width / 1.2,
       height: 50.0,
       padding: EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(
-            width: 1, color: const Color.fromARGB(255, 170, 170, 170),),
+          width: 1,
+          color: const Color.fromARGB(255, 170, 170, 170),
+        ),
         borderRadius: const BorderRadius.all(Radius.circular(4)),
       ),
       child: Row(
@@ -133,15 +139,15 @@ class LocationInputField extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 15.0),
               child: TextField(
-
                 controller: controller,
+                onTap: ontap,
+                readOnly: true,
                 decoration: InputDecoration(
-                  contentPadding: EdgeInsets.zero,
+                    contentPadding: EdgeInsets.zero,
                     // prefixIcon: const Icon(Icons.location_on),
                     hintText: title,
                     hintStyle: TextStyle(fontSize: 15),
-                    border: InputBorder.none
-                ),
+                    border: InputBorder.none),
               ),
             ),
           ),
@@ -153,7 +159,16 @@ class LocationInputField extends StatelessWidget {
 
 class DriverCard extends StatelessWidget {
   final Function() onpress;
-  const DriverCard({super.key, required this.onpress});
+  final double truckSize;
+  final double estimatedPrice;
+  final String truckType;
+  const DriverCard({
+    super.key,
+    required this.onpress,
+    required this.truckSize,
+    required this.estimatedPrice,
+    required this.truckType,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -200,9 +215,9 @@ class DriverCard extends StatelessWidget {
                       color: Color.fromARGB(255, 82, 82, 82),
                       borderRadius: BorderRadius.all(Radius.circular(4)),
                     ),
-                    child: const Center(
+                    child: Center(
                       child: Text(
-                        "5.7 TON",
+                        "${truckSize.toString()} TON",
                         style: TextStyle(
                             color: Color.fromARGB(255, 233, 233, 233),
                             fontSize: 9,
@@ -251,13 +266,16 @@ class DriverCard extends StatelessWidget {
                 height: 25,
                 decoration: BoxDecoration(
                   border: Border.all(
-                      width: 1,
-                      color: const Color.fromARGB(255, 170, 170, 170),),
-                  borderRadius: const BorderRadius.all(Radius.circular(4),),
+                    width: 1,
+                    color: const Color.fromARGB(255, 170, 170, 170),
+                  ),
+                  borderRadius: const BorderRadius.all(
+                    Radius.circular(4),
+                  ),
                 ),
-                child: const Center(
+                child: Center(
                   child: Text(
-                    "MIN TRUCK",
+                    truckType.toUpperCase(),
                     style: TextStyle(
                         color: Color.fromARGB(255, 58, 58, 58),
                         fontSize: 9,
@@ -265,8 +283,8 @@ class DriverCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const Text(
-                "22,000 Tsh",
+              Text(
+                "${estimatedPrice.toString()} Tsh",
                 style: TextStyle(
                     color: Color.fromARGB(255, 58, 58, 58),
                     fontWeight: FontWeight.bold),
@@ -302,7 +320,8 @@ class DriverCard extends StatelessWidget {
 
 class CustomDrawer extends StatelessWidget {
   final Function() ontap;
-  const CustomDrawer({super.key,
+  const CustomDrawer({
+    super.key,
     required this.ontap,
   });
 
@@ -329,20 +348,24 @@ class CustomDrawer extends StatelessWidget {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const CircleAvatar(radius: 26,),
+                          const CircleAvatar(
+                            radius: 26,
+                          ),
                           const Padding(
                             padding: EdgeInsets.symmetric(horizontal: 8.0),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
-
                               children: [
                                 Text("John Doe"),
                                 Text("+255768906543")
                               ],
                             ),
                           ),
-                          IconButton(onPressed: ontap, icon: const Icon(Icons.arrow_forward_ios))
-                        ],),
+                          IconButton(
+                              onPressed: ontap,
+                              icon: const Icon(Icons.arrow_forward_ios))
+                        ],
+                      ),
                     ),
                     ListTile(
                       leading: const Icon(Icons.person),
@@ -351,9 +374,7 @@ class CustomDrawer extends StatelessWidget {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => AccountPage(
-
-                            ),
+                            builder: (context) => AccountPage(),
                           ),
                         );
                       },
@@ -365,9 +386,7 @@ class CustomDrawer extends StatelessWidget {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const RidesHistoryPage(
-
-                            ),
+                            builder: (context) => const RidesHistoryPage(),
                           ),
                         );
                       },

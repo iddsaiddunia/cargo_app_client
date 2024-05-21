@@ -61,10 +61,12 @@ class _LoginPageState extends State<LoginPage> {
                   child: Column(children: [
                     BottomBorderInputField(
                       controller: emailController,
+                      isPasswordInput: false,
                       title: "Email",
                     ),
                     BottomBorderInputField(
                       controller: passwordController,
+                      isPasswordInput: true,
                       title: "Password",
                     ),
                     const SizedBox(
@@ -83,12 +85,13 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     CustomePrimaryButton(
                       title: "Signup",
-                      isLoading: isLoading,
+                      isLoading: false,
                       press: () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (context) => const RegistrationPage()),
+                            builder: (context) => const RegistrationPage(),
+                          ),
                         );
                       },
                       isWithOnlyBorder: true,
@@ -128,26 +131,32 @@ class _LoginPageState extends State<LoginPage> {
         setState(() {
           isLoading = false;
         });
+      } else {
+        setState(() {
+          isLoading = false;
+        });
+        // Authentication failed, show an error message
+
+        _showToast(context, "No user found");
       }
     } else {
+      setState(() {
+        isLoading = false;
+      });
       // Authentication failed, show an error message
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: Text('Authentication Failed'),
-            content: Text('Invalid username or password.'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-                child: Text('OK'),
-              ),
-            ],
-          );
-        },
-      );
+
+      _showToast(context, "Please fill all fields");
     }
+  }
+
+  void _showToast(BuildContext context, String message) {
+    final scaffold = ScaffoldMessenger.of(context);
+    scaffold.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: SnackBarAction(
+            label: 'UNDO', onPressed: scaffold.hideCurrentSnackBar),
+      ),
+    );
   }
 }

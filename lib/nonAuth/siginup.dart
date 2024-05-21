@@ -63,15 +63,30 @@ class _RegistrationPageState extends State<RegistrationPage> {
                   ),
                   child: Column(children: [
                     BottomBorderInputField(
-                        controller: usernameController, title: "Username"),
+                      controller: usernameController,
+                      isPasswordInput: false,
+                      title: "Username",
+                    ),
                     BottomBorderInputField(
-                        controller: emailController, title: "Email"),
+                      controller: emailController,
+                      isPasswordInput: false,
+                      title: "Email",
+                    ),
                     BottomBorderInputField(
-                        controller: phoneController, title: "Phone"),
+                      controller: phoneController,
+                      isPasswordInput: false,
+                      title: "Phone",
+                    ),
                     BottomBorderInputField(
-                        controller: passwordController, title: "Password"),
+                      controller: passwordController,
+                      isPasswordInput: true,
+                      title: "Password",
+                    ),
                     BottomBorderInputField(
-                        controller: verifyController, title: "Retype Password"),
+                      controller: verifyController,
+                      isPasswordInput: true,
+                      title: "Retype Password",
+                    ),
                     const SizedBox(
                       height: 60.0,
                     ),
@@ -86,7 +101,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                     ),
                     CustomePrimaryButton(
                       title: "Login",
-                      isLoading: isLoading,
+                      isLoading: false,
                       press: () {
                         Navigator.pop(context);
                       },
@@ -106,22 +121,54 @@ class _RegistrationPageState extends State<RegistrationPage> {
     setState(() {
       isLoading = true;
     });
-    final user =
-        await auth.createNewUser(emailController.text, passwordController.text);
-    if (user != null) {
-      await FirebaseFirestore.instance.collection('clients').doc(user.uid).set({
-        'username': usernameController.text.trim(),
-        'phone': phoneController.text.trim(),
-      });
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => LoginPage(),
-        ),
-      );
+    if (usernameController.text != '' ||
+        emailController.text != '' ||
+        phoneController.text != '' ||
+        passwordController.text != '' ||
+        verifyController.text != '') {
+      if (passwordController.text == verifyController.text) {
+        final user = await auth.createNewUser(
+            emailController.text, passwordController.text);
+        if (user != null) {
+          await FirebaseFirestore.instance
+              .collection('clients')
+              .doc(user.uid)
+              .set({
+            'username': usernameController.text.trim(),
+            'phone': phoneController.text.trim(),
+          });
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LoginPage(),
+            ),
+          );
+          setState(() {
+            isLoading = false;
+          });
+        }
+      } else {
+        setState(() {
+          isLoading = false;
+        });
+        _showToast(context, "Password not matching");
+      }
+    } else {
       setState(() {
         isLoading = false;
       });
+      _showToast(context, "Please fill all fields");
     }
+  }
+
+  void _showToast(BuildContext context, String message) {
+    final scaffold = ScaffoldMessenger.of(context);
+    scaffold.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: SnackBarAction(
+            label: 'UNDO', onPressed: scaffold.hideCurrentSnackBar),
+      ),
+    );
   }
 }

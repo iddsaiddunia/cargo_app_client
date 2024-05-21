@@ -1,21 +1,30 @@
+import 'dart:io';
+
 import 'package:cargo_app/auth/about.dart';
 import 'package:cargo_app/auth/account.dart';
 import 'package:cargo_app/auth/driver_info.dart';
 import 'package:cargo_app/auth/history.dart';
 import 'package:cargo_app/auth/location_search.dart';
+import 'package:cargo_app/models/driver.dart';
+import 'package:cargo_app/nonAuth/login.dart';
 import 'package:cargo_app/services/provider.dart';
 import 'package:cargo_app/widgets.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show PlatformException, rootBundle;
 // import 'package:location/location.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:async';
 
 import 'package:provider/provider.dart';
+import 'package:geolocator/geolocator.dart';
+// import 'package:google_place/google_place.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -27,7 +36,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   late String _mapStyle;
   bool isDrawerOpen = false;
-  late GoogleMapController _controller;
+  late GoogleMapController _mapController;
   final _destinationController = TextEditingController();
   final _currentLocationController = TextEditingController();
   bool isPackageDetailsFilled = false;
@@ -35,10 +44,16 @@ class _HomePageState extends State<HomePage> {
   String? _selectedOption = "1 - 0.9";
   bool isPhotoTaken = false;
   bool isLoading = false;
-  // final Location _location = Location();
-  // late LatLng _currentPosition;
+  String? _destination;
+  // late Location _location;
+  // LatLng? _currentPosition;
   // late LatLng _destination;
-  // File? _image;
+  LatLng? _selectedLocation;
+  late Position _currentPosition;
+  LatLng? _currentLatLng;
+
+  final CollectionReference driversCollection =
+      FirebaseFirestore.instance.collection('Drivers');
 
   List<String> packageTypeList = [
     "Clothes",
@@ -54,26 +69,100 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  File? image;
+  Future pickImage() async {
+    try {
+      final image = await ImagePicker().pickImage(source: ImageSource.camera);
+      if (image == null) return;
+      final imageTemp = File(image.path);
+      setState(() => this.image = imageTemp);
+    } on PlatformException catch (e) {
+      print('Failed to pick image: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    // _getCurrentLocation();
+    // _location = Location();
+    // _initializeLocation();
+    _determinePosition();
     rootBundle.loadString('assets/map_style.txt').then((string) {
       _mapStyle = string;
     });
   }
 
-  // Future<void> _getCurrentLocation() async {
-  //   try {
-  //     var userLocation = await _location.getLocation();
-  //     setState(() {
-  //       _currentPosition =
-  //           LatLng(userLocation.latitude!, userLocation.longitude!);
-  //     });
-  //   } catch (e) {
-  //     print("Error getting user location: $e");
-  //   }
-  // }
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _getLatLngFromAddress(String address) async {
+    try {
+      List<Location> locations = await locationFromAddress(address);
+      if (locations.isNotEmpty) {
+        setState(() {
+          _selectedLocation =
+              LatLng(locations[0].latitude, locations[0].longitude);
+        });
+      }
+    } catch (e) {
+      print('Error occurred while converting address to LatLng: $e');
+    }
+  }
+
+  Future<void> _determinePosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return Future.error('Location services are disabled.');
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return Future.error('Location permissions are denied');
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      return Future.error(
+          'Location permissions are permanently denied, we cannot request permissions.');
+    }
+
+    Position position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    setState(() {
+      _currentPosition = position;
+      _currentLatLng = LatLng(position.latitude, position.longitude);
+    });
+
+    Geolocator.getPositionStream(
+      locationSettings: LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      ),
+    ).listen((Position position) {
+      if (position.accuracy <= 20) {
+        // Filtering out positions with low accuracy
+        setState(() {
+          _currentPosition = position;
+          _currentLatLng = LatLng(position.latitude, position.longitude);
+        });
+        _mapController
+            .animateCamera(CameraUpdate.newCameraPosition(CameraPosition(
+          target: _currentLatLng!,
+          zoom: 15.0,
+        )));
+      }
+    });
+  }
 
   void toggleDrawer() {
     setState(() {
@@ -81,8 +170,22 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<void> saveInitPickupRequest(BuildContext context, String userId,
-      String packageType, String packageSize, String pictureUrl) async {
+  Future<DocumentSnapshot> getDocument() async {
+    var firebaseUser = await FirebaseAuth.instance.currentUser!;
+    return FirebaseFirestore.instance
+        .collection("clients")
+        .doc(firebaseUser.uid)
+        .get();
+  }
+
+  Future<void> saveInitPickupRequest(
+    BuildContext context,
+    String userId,
+    String packageType,
+    String packageSize,
+    String pictureUrl,
+    LatLng currentLocation,
+  ) async {
     try {
       setState(() {
         isLoading = true;
@@ -116,6 +219,12 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
+        actions: [
+          const Padding(
+            padding: EdgeInsets.all(8.0),
+            child: Icon(Icons.notifications),
+          ),
+        ],
       ),
       drawer: Drawer(
         backgroundColor: Colors.white,
@@ -123,24 +232,39 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             children: <Widget>[
               Container(
-                height: 80.0,
+                height: 100.0,
+                padding: EdgeInsets.symmetric(vertical: 20, horizontal: 15),
                 decoration: const BoxDecoration(
                   color: Colors.white,
                 ),
-                child: const Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 26,
-                    ),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Column(
+                child: FutureBuilder(
+                  future: getDocument(),
+                  builder: (context, AsyncSnapshot<DocumentSnapshot> snapshot) {
+                    if (snapshot.connectionState == ConnectionState.done) {
+                      return Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [Text("John Doe"), Text("+255768906543")],
-                      ),
-                    ),
-                  ],
+                        children: [
+                          CircleAvatar(
+                            radius: 26,
+                          ),
+                          Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(snapshot.data!['username']),
+                                Text("+255" + snapshot.data?['phone'])
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    } else if (snapshot.connectionState ==
+                        ConnectionState.none) {
+                      return const Text("No data");
+                    }
+                    return Center(child: const CircularProgressIndicator());
+                  },
                 ),
               ),
               ListTile(
@@ -185,37 +309,47 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            mapType: MapType.normal,
-            initialCameraPosition: const CameraPosition(
-              target: LatLng(37.7749, -122.4194), // San Francisco coordinates
-              zoom: 12.0,
-            ),
-            onMapCreated: (GoogleMapController controller) {
-              _controller = controller;
-              controller.setMapStyle(_mapStyle);
-            },
-            // markers: _destination != null
-            //     ? {
-            //         Marker(
-            //           markerId: MarkerId('destination'),
-            //           position: _destination,
-            //         ),
-            //       }
-            //     : {},
-            // polylines: _destination != null
-            //     ? {
-            //         Polyline(
-            //           polylineId: PolylineId('route'),
-            //           color: Colors.blue,
-            //           points: [
-            //             _currentPosition,
-            //             _destination,
-            //           ],
-            //         ),
-            //       }
-            //     : {},
-          ),
+          _currentLatLng == null
+              ? Center(child: const CircularProgressIndicator())
+              : GoogleMap(
+                  mapType: MapType.normal,
+
+                  onMapCreated: (GoogleMapController controller) {
+                    _mapController = controller;
+                    controller.setMapStyle(_mapStyle);
+                    _mapController!.animateCamera(
+                        CameraUpdate.newCameraPosition(CameraPosition(
+                      target: _currentLatLng ?? LatLng(0, 0),
+                      zoom: 16.0,
+                    )));
+                  },
+                  initialCameraPosition: CameraPosition(
+                    target: _currentLatLng ?? LatLng(0, 0),
+                    zoom: 16.0,
+                  ),
+                  myLocationEnabled: true,
+                  myLocationButtonEnabled: true,
+                  // markers: _destination != null
+                  //     ? {
+                  //         Marker(
+                  //           markerId: MarkerId('destination'),
+                  //           position: _destination,
+                  //         ),
+                  //       }
+                  //     : {},
+                  // polylines: _destination != null
+                  //     ? {
+                  //         Polyline(
+                  //           polylineId: PolylineId('route'),
+                  //           color: Colors.blue,
+                  //           points: [
+                  //             _currentPosition,
+                  //             _destination,
+                  //           ],
+                  //         ),
+                  //       }
+                  //     : {},
+                ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 18.0),
             child: SafeArea(
@@ -235,55 +369,95 @@ class _HomePageState extends State<HomePage> {
                       (isPackageDetailsFilled)
                           ? Column(
                               children: [
-                                LocationInputField(
-                                  controller: _currentLocationController,
-                                  title: "Pickup location",
+                                // LocationInputField(
+                                //   controller: _currentLocationController,
+                                //   title: "Pickup location",
+                                // ),
+                                Container(
+                                  width:
+                                      MediaQuery.of(context).size.width / 1.2,
+                                  height: 50.0,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    border: Border.all(
+                                      width: 1,
+                                      color: const Color.fromARGB(
+                                          255, 170, 170, 170),
+                                    ),
+                                    borderRadius: const BorderRadius.all(
+                                        Radius.circular(4)),
+                                  ),
+                                  child: const Row(
+                                    children: [
+                                      Icon(Icons.navigation),
+                                      Padding(
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: 10.0),
+                                        child: Text("Current location"),
+                                      )
+                                    ],
+                                  ),
                                 ),
                                 const SizedBox(
                                   height: 7.0,
                                 ),
-                                // LocationInputField(
-                                //   controller: _destinationController,
-                                //   title: "Destination",
-                                // ),
-                                GestureDetector(
-                                  onTap: () {
-                                    Navigator.push(
+                                LocationInputField(
+                                  controller: _destinationController,
+                                  title: _destination ?? "Destination",
+                                  ontap: () async {
+                                    final result = await Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (context) =>
-                                            LocationSearchPage(),
-                                      ),
+                                          builder: (context) => SearchPage()),
                                     );
+
+                                    if (result != null && result is String) {
+                                      _getLatLngFromAddress(result);
+                                      setState(() {
+                                        _destination = result;
+                                      });
+                                    }
                                   },
-                                  child: Container(
-                                    width:
-                                        MediaQuery.of(context).size.width / 1.2,
-                                    height: 50.0,
-                                    padding:
-                                        EdgeInsets.symmetric(horizontal: 10),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      border: Border.all(
-                                        width: 1,
-                                        color: const Color.fromARGB(
-                                            255, 170, 170, 170),
-                                      ),
-                                      borderRadius: const BorderRadius.all(
-                                          Radius.circular(4)),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.navigation),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 10.0),
-                                          child: Text("Destination"),
-                                        )
-                                      ],
-                                    ),
-                                  ),
                                 ),
+                                // GestureDetector(
+                                //   onTap: () {
+                                // Navigator.push(
+                                //   context,
+                                //   MaterialPageRoute(
+                                //     builder: (context) => SearchPage(),
+                                //   ),
+                                // );
+                                //   },
+                                //   child: Container(
+                                //     width:
+                                //         MediaQuery.of(context).size.width / 1.2,
+                                //     height: 50.0,
+                                //     padding: const EdgeInsets.symmetric(
+                                //         horizontal: 10),
+                                //     decoration: BoxDecoration(
+                                //       color: Colors.white,
+                                //       border: Border.all(
+                                //         width: 1,
+                                //         color: const Color.fromARGB(
+                                //             255, 170, 170, 170),
+                                //       ),
+                                //       borderRadius: const BorderRadius.all(
+                                //           Radius.circular(4)),
+                                //     ),
+                                //     child: const Row(
+                                //       children: [
+                                //         Icon(Icons.navigation),
+                                //         Padding(
+                                //           padding: EdgeInsets.symmetric(
+                                //               horizontal: 10.0),
+                                //           child: Text("Destination"),
+                                //         )
+                                //       ],
+                                //     ),
+                                //   ),
+                                // ),
                                 const SizedBox(
                                   height: 7.0,
                                 ),
@@ -294,27 +468,61 @@ class _HomePageState extends State<HomePage> {
                   ),
 
 //****************************************************************
-                  SizedBox(
-                    width: double.infinity,
-                    height: 150,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: 3,
-                      itemBuilder: (context, index) {
-                        return DriverCard(
-                          onpress: () {
-                            print("hello");
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => DriverInfoPage(),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  )
+                  (isPackageDetailsFilled && _destination != "")
+                      ? SizedBox(
+                          width: double.infinity,
+                          height: 150,
+                          child: StreamBuilder<Object>(
+                              stream: driversCollection.snapshots(),
+                              builder: (context, snapshot) {
+                                if (snapshot.hasError) {
+                                  return Center(
+                                      child: Text('Error: ${snapshot.error}'));
+                                }
+                                if (snapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return const Center(
+                                      child: CircularProgressIndicator());
+                                }
+
+                                if (!snapshot.hasData ||
+                                    snapshot.data == null) {
+                                  return const Center(
+                                      child: Text('No data available'));
+                                }
+
+                                // Explicitly cast snapshot.data to QuerySnapshot
+                                final QuerySnapshot querySnapshot =
+                                    snapshot.data as QuerySnapshot;
+
+                                final drivers = querySnapshot.docs.map((doc) {
+                                  return Driver.fromDocument(doc);
+                                }).toList();
+                                return ListView.builder(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: drivers.length,
+                                  itemBuilder: (context, index) {
+                                    return DriverCard(
+                                      truckSize: drivers[index].truckSize,
+                                      estimatedPrice: 6000,
+                                      truckType: drivers[index].truckType,
+                                      onpress: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                DriverInfoPage(
+                                              id: drivers[index].driverId,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                );
+                              }),
+                        )
+                      : const SizedBox(),
                 ],
               ),
             ),
@@ -471,26 +679,46 @@ class _HomePageState extends State<HomePage> {
                                   ),
                                   const Divider(),
                                   const SizedBox(
-                                    height: 10.0,
+                                    height: 6.0,
                                   ),
                                   InkWell(
-                                    onTap: () async {
-                                      //              final image = await ImagePicker().getImage(source: ImageSource.gallery);
-                                      //  if (image != null) {
-                                      //    _image = File(image.path);
-                                      //  }
+                                    onTap: () {
+                                      pickImage();
                                     },
-                                    child: const Row(
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Icon(Icons.camera),
-                                        Text("Take package picture")
+                                        Container(
+                                          width: 90,
+                                          height: 37,
+                                          decoration: BoxDecoration(
+                                              // color: Colors.blue,
+                                              border: Border.all(
+                                                  width: 2,
+                                                  color: Colors.blue)),
+                                          child: const Icon(Icons.camera),
+                                        ),
+                                        (image == null)
+                                            ? Text("Take package picture")
+                                            : Text("Retake package picture")
                                       ],
                                     ),
                                   ),
                                   const SizedBox(
-                                    height: 10.0,
+                                    height: 5.0,
+                                  ),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    // height: 200,
+                                    child: image != null
+                                        ? Image.file(image!)
+                                        : Text('No image selected.'),
                                   ),
                                   const Divider(),
+                                  const SizedBox(
+                                    height: 5.0,
+                                  ),
                                   Align(
                                     alignment: Alignment.bottomCenter,
                                     child: (!isPhotoTaken)
@@ -499,17 +727,50 @@ class _HomePageState extends State<HomePage> {
                                             height: 50,
                                             elevation: 0,
                                             color: Colors.blue,
-                                            onPressed: () {
+                                            onPressed: () async {
                                               if (userId != "") {
-                                                saveInitPickupRequest(
+                                                if (image != null) {
+                                                  setState(() {
+                                                    isLoading = true;
+                                                  });
+                                                  var imgUrl = "";
+                                                  final storageRef =
+                                                      FirebaseStorage.instance
+                                                          .ref();
+                                                  final imagesRef =
+                                                      storageRef.child(
+                                                          "images/${DateTime.now().millisecondsSinceEpoch}.png");
+                                                  final uploadTask =
+                                                      imagesRef.putFile(image!);
+                                                  await uploadTask
+                                                      .whenComplete(() async {
+                                                    imgUrl = await imagesRef
+                                                        .getDownloadURL();
+                                                  });
+                                                  if (imgUrl != "") {
+                                                    saveInitPickupRequest(
+                                                      context,
+                                                      userId,
+                                                      packageTypeList[
+                                                          _selectedIndex],
+                                                      _selectedOption!,
+                                                      imgUrl,
+                                                      _currentLatLng!,
+                                                    );
+                                                  } else {
+                                                    _showToast(
+                                                      context,
+                                                      "retry to add package photo",
+                                                    );
+                                                  }
+                                                } else {
+                                                  _showToast(
                                                     context,
-                                                    userId,
-                                                    packageTypeList[
-                                                        _selectedIndex],
-                                                    _selectedOption!,
-                                                    "");
+                                                    "Add package photo to continue",
+                                                  );
+                                                }
                                               } else {
-                                                print('User not logged in');
+                                                auth.signOutUser();
                                               }
                                             },
                                             child: (!isLoading)
@@ -518,7 +779,7 @@ class _HomePageState extends State<HomePage> {
                                                     style: TextStyle(
                                                         color: Colors.white),
                                                   )
-                                                : CircularProgressIndicator(
+                                                : const CircularProgressIndicator(
                                                     color: Colors.white,
                                                   ),
                                           )
@@ -535,6 +796,17 @@ class _HomePageState extends State<HomePage> {
                 : Container(),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showToast(BuildContext context, String message) {
+    final scaffold = ScaffoldMessenger.of(context);
+    scaffold.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: SnackBarAction(
+            label: 'UNDO', onPressed: scaffold.hideCurrentSnackBar),
       ),
     );
   }
