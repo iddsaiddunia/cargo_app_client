@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class Driver {
   final GeoPoint currentLocation;
@@ -27,8 +28,9 @@ class Driver {
 
   factory Driver.fromDocument(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+
     return Driver(
-      currentLocation: data['currentLocation'],
+      currentLocation: data['currentLocation'] as GeoPoint,
       driverId: data['driverId'],
       isAvailable: data['isAvailable'],
       phone: data['phone'],

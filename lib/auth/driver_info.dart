@@ -21,6 +21,8 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
   LatLng? _currentLatLng;
   late GoogleMapController _mapController;
 
+
+  @override
   void initState() {
     super.initState();
     _determinePosition();
@@ -80,6 +82,13 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
         )));
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    _determinePosition();
+    super.dispose();
   }
 
   @override

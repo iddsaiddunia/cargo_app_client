@@ -1,4 +1,6 @@
+import 'dart:ffi';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:cargo_app/auth/about.dart';
 import 'package:cargo_app/auth/account.dart';
@@ -7,6 +9,7 @@ import 'package:cargo_app/auth/history.dart';
 import 'package:cargo_app/auth/location_search.dart';
 import 'package:cargo_app/models/driver.dart';
 import 'package:cargo_app/nonAuth/login.dart';
+import 'package:cargo_app/services/firebase_services.dart';
 import 'package:cargo_app/services/provider.dart';
 import 'package:cargo_app/widgets.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -14,8 +17,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:geoflutterfire2/geoflutterfire2.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter/services.dart' show PlatformException, rootBundle;
 // import 'package:location/location.dart';
@@ -45,15 +50,23 @@ class _HomePageState extends State<HomePage> {
   bool isPhotoTaken = false;
   bool isLoading = false;
   String? _destination;
-  // late Location _location;
-  // LatLng? _currentPosition;
-  // late LatLng _destination;
   LatLng? _selectedLocation;
   late Position _currentPosition;
   LatLng? _currentLatLng;
+  static const maxSeconds = 60;
+  int currentSeconds = maxSeconds;
+  Timer? _timer;
 
   final CollectionReference driversCollection =
       FirebaseFirestore.instance.collection('Drivers');
+  final geo = GeoFlutterFire();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirestoreService _firestoreService = FirestoreService();
+  List<Marker> _markers = [];
+  List<String> _driverIds = [];
+  final double estimatedPrice = 5000.0;
+
+  String requestdocId = "";
 
   List<String> packageTypeList = [
     "Clothes",
@@ -84,18 +97,15 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    // _location = Location();
-    // _initializeLocation();
     _determinePosition();
     rootBundle.loadString('assets/map_style.txt').then((string) {
       _mapStyle = string;
     });
-  }
-
-  @override
-  void dispose() {
-    _mapController.dispose();
-    super.dispose();
+    // startTimer();
+    if (_currentLatLng != null) {
+      _loadData(_currentLatLng!);
+    }
+    _loadDriverIds();
   }
 
   Future<void> _getLatLngFromAddress(String address) async {
@@ -143,26 +153,55 @@ class _HomePageState extends State<HomePage> {
       _currentLatLng = LatLng(position.latitude, position.longitude);
     });
 
-    Geolocator.getPositionStream(
-      locationSettings: LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-      ),
-    ).listen((Position position) {
-      if (position.accuracy <= 20) {
-        // Filtering out positions with low accuracy
-        setState(() {
-          _currentPosition = position;
-          _currentLatLng = LatLng(position.latitude, position.longitude);
-        });
-        _mapController
-            .animateCamera(CameraUpdate.newCameraPosition(CameraPosition(
-          target: _currentLatLng!,
-          zoom: 15.0,
-        )));
-      }
-    });
+    // Geolocator.getPositionStream(
+    //   locationSettings: const LocationSettings(
+    //     accuracy: LocationAccuracy.high,
+    //     distanceFilter: 10,
+    //   ),
+    // ).listen((Position position) async {
+    //   if (position.accuracy <= 20) {
+    //     // Filtering out positions with low accuracy
+    //     setState(() {
+    //       _currentPosition = position;
+    //       _currentLatLng = LatLng(position.latitude, position.longitude);
+    //     });
+    //     _mapController.animateCamera(
+    //       CameraUpdate.newCameraPosition(
+    //         CameraPosition(
+    //           target: _currentLatLng!,
+    //           zoom: 15.0,
+    //         ),
+    //       ),
+    //     );
+    //   }
+    // });
   }
+
+  // Future<void> _getNearbyDrivers(LatLng currentLatLng) async {
+  //   GeoFirePoint center = geo.point(
+  //       latitude: currentLatLng.latitude, longitude: currentLatLng.longitude);
+  //   var collectionReference = _firestore.collection('Drivers');
+
+  //   String field = 'currentLocation';
+  //   double radius = 50; // Adjust the radius as needed
+
+  //   Stream<List<DocumentSnapshot>> stream = geo
+  //       .collection(collectionRef: collectionReference)
+  //       .within(center: center, radius: radius, field: field);
+
+  //   List<DocumentSnapshot> drivers = await stream.first;
+
+  //   setState(() {
+  //     _markers = drivers.map((driver) {
+  //       GeoPoint geoPoint = driver['currentLocation'];
+  //       return Marker(
+  //         markerId: MarkerId(driver.id),
+  //         position: LatLng(geoPoint.latitude, geoPoint.longitude),
+  //         infoWindow: InfoWindow(title: 'Driver', snippet: driver['username']),
+  //       );
+  //     }).toList();
+  //   });
+  // }
 
   void toggleDrawer() {
     setState(() {
@@ -178,30 +217,36 @@ class _HomePageState extends State<HomePage> {
         .get();
   }
 
-  Future<void> saveInitPickupRequest(
-    BuildContext context,
-    String userId,
-    String packageType,
-    String packageSize,
-    String pictureUrl,
-    LatLng currentLocation,
-  ) async {
+  Future<void> sendRequest(
+      BuildContext context,
+      String userId,
+      String packageType,
+      String packageSize,
+      String pictureUrl,
+      LatLng currentLocation,
+      String destination,
+      List<String> drivers,
+      double price) async {
     try {
       setState(() {
         isLoading = true;
       });
-
+      // final Geoflutterfire _geo = Geoflutterfire();
       await FirebaseFirestore.instance.collection('Requests').add({
         'userId': userId,
         'packageType': packageType,
         'packageSize': packageSize,
         'pictureUrl': pictureUrl,
-        'currentLocation': null, // Empty for now
-        'destination': null, // Empty for now
-        'driverId': null, // Empty for now
+        'currentLocation': {
+          'latitude': currentLocation.latitude,
+          'longitude': currentLocation.longitude,
+        },
+        'destination': destination, // Empty for now
+        'driverId': drivers,
+        'estimatedPrice': price,
         'isPickedUp': false,
         'requestTime': Timestamp.now(),
-      });
+      }).then((value) => {requestdocId = value.id});
       setState(() {
         isPackageDetailsFilled = true;
         isLoading = false;
@@ -211,6 +256,83 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        if (currentSeconds > 0) {
+          currentSeconds--;
+        } else {
+          _timer?.cancel();
+        }
+      });
+    });
+  }
+
+//////////////////////////////////////////////////////
+
+  Future<void> _loadDriverIds() async {
+    List<String> driverIds = await fetchAllDriverIds();
+    setState(() {
+      _driverIds = driverIds;
+    });
+  }
+
+  Future<List<String>> fetchAllDriverIds() async {
+    List<String> driverIds = [];
+    QuerySnapshot snapshot =
+        await FirebaseFirestore.instance.collection('Drivers').get();
+
+    for (var document in snapshot.docs) {
+      driverIds.add(document.id);
+    }
+
+    return driverIds;
+  }
+
+  void _loadData(LatLng currentLatLng) async {
+    List<DocumentSnapshot> drivers = await _getNearbyDrivers(currentLatLng);
+
+    setState(() {
+      _markers = drivers.map((driver) {
+        GeoPoint geoPoint = driver['currentLocation'];
+        return Marker(
+          markerId: MarkerId(driver.id),
+          position: LatLng(geoPoint.latitude, geoPoint.longitude),
+          infoWindow: InfoWindow(title: 'Driver', snippet: driver['username']),
+        );
+      }).toList();
+    });
+  }
+
+// final geo = GeoFlutterFire();
+
+  Future<List<DocumentSnapshot>> _getNearbyDrivers(LatLng currentLatLng) async {
+    GeoFirePoint center = geo.point(
+        latitude: currentLatLng.latitude, longitude: currentLatLng.longitude);
+    var collectionReference = _firestore.collection('Drivers');
+
+    String field = 'currentLocation';
+    double radius = 0.5; // Radius in kilometers
+
+    Stream<List<DocumentSnapshot>> stream = geo
+        .collection(collectionRef: collectionReference)
+        .within(center: center, radius: radius, field: field);
+
+    List<DocumentSnapshot> drivers = await stream.first;
+    return drivers;
+  }
+
+/////////////////////////////////////////////////////
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _mapController.dispose();
+    _determinePosition();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     String userId = Provider.of<UserProvider>(context, listen: false).userId;
     String distination =
@@ -233,7 +355,8 @@ class _HomePageState extends State<HomePage> {
             children: <Widget>[
               Container(
                 height: 100.0,
-                padding: EdgeInsets.symmetric(vertical: 20, horizontal: 15),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 20, horizontal: 15),
                 decoration: const BoxDecoration(
                   color: Colors.white,
                 ),
@@ -244,11 +367,12 @@ class _HomePageState extends State<HomePage> {
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          CircleAvatar(
+                          const CircleAvatar(
                             radius: 26,
                           ),
                           Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 8.0),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 8.0),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -263,7 +387,7 @@ class _HomePageState extends State<HomePage> {
                         ConnectionState.none) {
                       return const Text("No data");
                     }
-                    return Center(child: const CircularProgressIndicator());
+                    return const Center(child: CircularProgressIndicator());
                   },
                 ),
               ),
@@ -310,33 +434,26 @@ class _HomePageState extends State<HomePage> {
       body: Stack(
         children: [
           _currentLatLng == null
-              ? Center(child: const CircularProgressIndicator())
+              ? const Center(child: CircularProgressIndicator())
               : GoogleMap(
                   mapType: MapType.normal,
 
                   onMapCreated: (GoogleMapController controller) {
                     _mapController = controller;
                     controller.setMapStyle(_mapStyle);
-                    _mapController!.animateCamera(
+                    _mapController.animateCamera(
                         CameraUpdate.newCameraPosition(CameraPosition(
-                      target: _currentLatLng ?? LatLng(0, 0),
+                      target: _currentLatLng ?? const LatLng(0, 0),
                       zoom: 16.0,
                     )));
                   },
                   initialCameraPosition: CameraPosition(
-                    target: _currentLatLng ?? LatLng(0, 0),
+                    target: _currentLatLng ?? const LatLng(0, 0),
                     zoom: 16.0,
                   ),
                   myLocationEnabled: true,
                   myLocationButtonEnabled: true,
-                  // markers: _destination != null
-                  //     ? {
-                  //         Marker(
-                  //           markerId: MarkerId('destination'),
-                  //           position: _destination,
-                  //         ),
-                  //       }
-                  //     : {},
+                  markers: Set<Marker>.of(_markers),
                   // polylines: _destination != null
                   //     ? {
                   //         Polyline(
@@ -356,119 +473,158 @@ class _HomePageState extends State<HomePage> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // MenuButton(
-                      //   icon: Icons.menu,
-                      //   ontap: () {
-                      //     toggleDrawer();
-                      //   },
-                      // ),
-                      (isPackageDetailsFilled)
-                          ? Column(
+                  // Row(
+                  //   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  //   crossAxisAlignment: CrossAxisAlignment.start,
+                  //   children: [
+                  //     // MenuButton(
+                  //     //   icon: Icons.menu,
+                  //     //   ontap: () {
+                  //     //     toggleDrawer();
+                  //     //   },
+                  //     // ),
+                  //     (isPackageDetailsFilled)
+                  //         ? Column(
+                  //             children: [
+                  //               // LocationInputField(
+                  //               //   controller: _currentLocationController,
+                  //               //   title: "Pickup location",
+                  //               // ),
+                  //               Container(
+                  //                 width:
+                  //                     MediaQuery.of(context).size.width / 1.2,
+                  //                 height: 50.0,
+                  //                 padding: const EdgeInsets.symmetric(
+                  //                     horizontal: 10),
+                  //                 decoration: BoxDecoration(
+                  //                   color: Colors.white,
+                  //                   border: Border.all(
+                  //                     width: 1,
+                  //                     color: const Color.fromARGB(
+                  //                         255, 170, 170, 170),
+                  //                   ),
+                  //                   borderRadius: const BorderRadius.all(
+                  //                       Radius.circular(4)),
+                  //                 ),
+                  //                 child: const Row(
+                  //                   children: [
+                  //                     Icon(Icons.navigation),
+                  //                     Padding(
+                  //                       padding: EdgeInsets.symmetric(
+                  //                           horizontal: 10.0),
+                  //                       child: Text("Current location"),
+                  //                     )
+                  //                   ],
+                  //                 ),
+                  //               ),
+                  //               const SizedBox(
+                  //                 height: 7.0,
+                  //               ),
+                  //               LocationInputField(
+                  //                 controller: _destinationController,
+                  //                 title: _destination ?? "Destination",
+                  //                 ontap: () async {
+                  //                   final result = await Navigator.push(
+                  //                     context,
+                  //                     MaterialPageRoute(
+                  //                         builder: (context) => SearchPage()),
+                  //                   );
+
+                  //                   if (result != null && result is String) {
+                  //                     _getLatLngFromAddress(result);
+                  //                     setState(() {
+                  //                       _destination = result;
+                  //                     });
+                  //                   }
+                  //                 },
+                  //               ),
+                  //               // GestureDetector(
+                  //               //   onTap: () {
+                  //               // Navigator.push(
+                  //               //   context,
+                  //               //   MaterialPageRoute(
+                  //               //     builder: (context) => SearchPage(),
+                  //               //   ),
+                  //               // );
+                  //               //   },
+                  //               //   child: Container(
+                  //               //     width:
+                  //               //         MediaQuery.of(context).size.width / 1.2,
+                  //               //     height: 50.0,
+                  //               //     padding: const EdgeInsets.symmetric(
+                  //               //         horizontal: 10),
+                  //               //     decoration: BoxDecoration(
+                  //               //       color: Colors.white,
+                  //               //       border: Border.all(
+                  //               //         width: 1,
+                  //               //         color: const Color.fromARGB(
+                  //               //             255, 170, 170, 170),
+                  //               //       ),
+                  //               //       borderRadius: const BorderRadius.all(
+                  //               //           Radius.circular(4)),
+                  //               //     ),
+                  //               //     child: const Row(
+                  //               //       children: [
+                  //               //         Icon(Icons.navigation),
+                  //               //         Padding(
+                  //               //           padding: EdgeInsets.symmetric(
+                  //               //               horizontal: 10.0),
+                  //               //           child: Text("Destination"),
+                  //               //         )
+                  //               //       ],
+                  //               //     ),
+                  //               //   ),
+                  //               // ),
+                  //               const SizedBox(
+                  //                 height: 7.0,
+                  //               ),
+                  //             ],
+                  //           )
+                  //         : Container(),
+                  //   ],
+                  // ),
+
+                  (isPackageDetailsFilled)
+                      ? Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(8.0),
+                            height: 160,
+                            decoration:
+                                const BoxDecoration(color: Colors.white),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                // LocationInputField(
-                                //   controller: _currentLocationController,
-                                //   title: "Pickup location",
-                                // ),
-                                Container(
-                                  width:
-                                      MediaQuery.of(context).size.width / 1.2,
-                                  height: 50.0,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    border: Border.all(
-                                      width: 1,
-                                      color: const Color.fromARGB(
-                                          255, 170, 170, 170),
-                                    ),
-                                    borderRadius: const BorderRadius.all(
-                                        Radius.circular(4)),
-                                  ),
-                                  child: const Row(
-                                    children: [
-                                      Icon(Icons.navigation),
-                                      Padding(
-                                        padding: EdgeInsets.symmetric(
-                                            horizontal: 10.0),
-                                        child: Text("Current location"),
-                                      )
-                                    ],
+                                const Text("Request is sent please wait..."),
+                                SizedBox(
+                                  width: 50,
+                                  height: 50,
+                                  child: CircularProgressIndicator(
+                                    value: (maxSeconds - currentSeconds) /
+                                        maxSeconds,
+                                    strokeWidth: 6,
                                   ),
                                 ),
-                                const SizedBox(
-                                  height: 7.0,
-                                ),
-                                LocationInputField(
-                                  controller: _destinationController,
-                                  title: _destination ?? "Destination",
-                                  ontap: () async {
-                                    final result = await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (context) => SearchPage()),
-                                    );
-
-                                    if (result != null && result is String) {
-                                      _getLatLngFromAddress(result);
+                                MaterialButton(
+                                    elevation: 0,
+                                    minWidth: double.infinity,
+                                    height: 45,
+                                    child: const Text("Cancel Initial Request"),
+                                    color: Colors.blue,
+                                    textColor: Colors.white,
+                                    onPressed: () {
                                       setState(() {
-                                        _destination = result;
+                                        isPackageDetailsFilled = false;
                                       });
-                                    }
-                                  },
-                                ),
-                                // GestureDetector(
-                                //   onTap: () {
-                                // Navigator.push(
-                                //   context,
-                                //   MaterialPageRoute(
-                                //     builder: (context) => SearchPage(),
-                                //   ),
-                                // );
-                                //   },
-                                //   child: Container(
-                                //     width:
-                                //         MediaQuery.of(context).size.width / 1.2,
-                                //     height: 50.0,
-                                //     padding: const EdgeInsets.symmetric(
-                                //         horizontal: 10),
-                                //     decoration: BoxDecoration(
-                                //       color: Colors.white,
-                                //       border: Border.all(
-                                //         width: 1,
-                                //         color: const Color.fromARGB(
-                                //             255, 170, 170, 170),
-                                //       ),
-                                //       borderRadius: const BorderRadius.all(
-                                //           Radius.circular(4)),
-                                //     ),
-                                //     child: const Row(
-                                //       children: [
-                                //         Icon(Icons.navigation),
-                                //         Padding(
-                                //           padding: EdgeInsets.symmetric(
-                                //               horizontal: 10.0),
-                                //           child: Text("Destination"),
-                                //         )
-                                //       ],
-                                //     ),
-                                //   ),
-                                // ),
-                                const SizedBox(
-                                  height: 7.0,
-                                ),
+                                    }),
                               ],
-                            )
-                          : Container(),
-                    ],
-                  ),
-
+                            ),
+                          ),
+                        )
+                      : const Center(),
 //****************************************************************
-                  (isPackageDetailsFilled && _destination != "")
+                  (_destination != "")
                       ? SizedBox(
                           width: double.infinity,
                           height: 150,
@@ -504,16 +660,17 @@ class _HomePageState extends State<HomePage> {
                                   itemBuilder: (context, index) {
                                     return DriverCard(
                                       truckSize: drivers[index].truckSize,
-                                      estimatedPrice: 6000,
+                                      estimatedPrice: estimatedPrice,
                                       truckType: drivers[index].truckType,
+                                      isLoading: isLoading,
                                       onpress: () {
                                         Navigator.push(
                                           context,
                                           MaterialPageRoute(
                                             builder: (context) =>
                                                 DriverInfoPage(
-                                              id: drivers[index].driverId,
-                                            ),
+                                                    id: drivers[index]
+                                                        .driverId),
                                           ),
                                         );
                                       },
@@ -550,17 +707,79 @@ class _HomePageState extends State<HomePage> {
                           controller: scrollController,
                           child: Column(
                             children: [
+                              Align(
+                                child: Container(
+                                  width: 100,
+                                  height: 7,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.grey,
+                                    borderRadius: BorderRadius.all(
+                                      Radius.circular(10),
+                                    ),
+                                  ),
+                                ),
+                              ),
                               Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Align(
+                                  const SizedBox(
+                                    height: 16,
+                                  ),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      final result = await Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (context) => SearchPage()),
+                                      );
+
+                                      if (result != null && result is String) {
+                                        _getLatLngFromAddress(result);
+                                        setState(() {
+                                          _destination = result;
+                                        });
+                                      }
+                                    },
                                     child: Container(
-                                      width: 100,
-                                      height: 7,
-                                      decoration: const BoxDecoration(
-                                        color: Colors.grey,
-                                        borderRadius: BorderRadius.all(
+                                      width: double.infinity,
+                                      height: 70,
+                                      decoration: BoxDecoration(
+                                        color: const Color.fromARGB(
+                                            31, 204, 204, 204),
+                                        borderRadius: const BorderRadius.all(
                                           Radius.circular(10),
+                                        ),
+                                        border: Border.all(
+                                            width: 2,
+                                            color: const Color.fromARGB(
+                                                255, 205, 205, 206)),
+                                      ),
+                                      child: SingleChildScrollView(
+                                        scrollDirection: Axis.horizontal,
+                                        child: Row(
+                                          children: [
+                                            const Padding(
+                                              padding: EdgeInsets.all(8.0),
+                                              child: Icon(
+                                                Icons.search,
+                                                size: 32,
+                                              ),
+                                            ),
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 3.0),
+                                              child: Text(
+                                                _destination ?? "Where to?",
+                                                style: const TextStyle(
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Color.fromARGB(
+                                                      255, 71, 71, 71),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -622,7 +841,17 @@ class _HomePageState extends State<HomePage> {
                                               });
                                             },
                                           ),
-                                          const Text('1 - 999 Kg'),
+                                          const Row(
+                                            children: [
+                                              Text(
+                                                "[Bajaj] ",
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold),
+                                              ),
+                                              Text('1 - 999 Kg'),
+                                            ],
+                                          ),
                                         ],
                                       ),
                                       // Radio button for option B
@@ -637,7 +866,17 @@ class _HomePageState extends State<HomePage> {
                                               });
                                             },
                                           ),
-                                          const Text('1 - 3 Ton'),
+                                          const Row(
+                                            children: [
+                                              Text(
+                                                '[Kirikuu] ',
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold),
+                                              ),
+                                              Text('1 - 3 Ton'),
+                                            ],
+                                          ),
                                         ],
                                       ),
                                       // Radio button for option C
@@ -652,7 +891,17 @@ class _HomePageState extends State<HomePage> {
                                               });
                                             },
                                           ),
-                                          const Text('4 - 7 Ton'),
+                                          const Row(
+                                            children: [
+                                              Text(
+                                                '[Canter] ',
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold),
+                                              ),
+                                              Text('4 - 7 Ton'),
+                                            ],
+                                          ),
                                         ],
                                       ),
                                       Row(
@@ -700,8 +949,9 @@ class _HomePageState extends State<HomePage> {
                                           child: const Icon(Icons.camera),
                                         ),
                                         (image == null)
-                                            ? Text("Take package picture")
-                                            : Text("Retake package picture")
+                                            ? const Text("Take package picture")
+                                            : const Text(
+                                                "Retake package picture")
                                       ],
                                     ),
                                   ),
@@ -713,7 +963,7 @@ class _HomePageState extends State<HomePage> {
                                     // height: 200,
                                     child: image != null
                                         ? Image.file(image!)
-                                        : Text('No image selected.'),
+                                        : const Text('No image selected.'),
                                   ),
                                   const Divider(),
                                   const SizedBox(
@@ -729,44 +979,55 @@ class _HomePageState extends State<HomePage> {
                                             color: Colors.blue,
                                             onPressed: () async {
                                               if (userId != "") {
-                                                if (image != null) {
-                                                  setState(() {
-                                                    isLoading = true;
-                                                  });
-                                                  var imgUrl = "";
-                                                  final storageRef =
-                                                      FirebaseStorage.instance
-                                                          .ref();
-                                                  final imagesRef =
-                                                      storageRef.child(
-                                                          "images/${DateTime.now().millisecondsSinceEpoch}.png");
-                                                  final uploadTask =
-                                                      imagesRef.putFile(image!);
-                                                  await uploadTask
-                                                      .whenComplete(() async {
-                                                    imgUrl = await imagesRef
-                                                        .getDownloadURL();
-                                                  });
-                                                  if (imgUrl != "") {
-                                                    saveInitPickupRequest(
-                                                      context,
-                                                      userId,
-                                                      packageTypeList[
-                                                          _selectedIndex],
-                                                      _selectedOption!,
-                                                      imgUrl,
-                                                      _currentLatLng!,
-                                                    );
+                                                if (_destination != null) {
+                                                  if (image != null) {
+                                                    setState(() {
+                                                      isLoading = true;
+                                                    });
+                                                    var imgUrl = "";
+                                                    final storageRef =
+                                                        FirebaseStorage.instance
+                                                            .ref();
+                                                    final imagesRef =
+                                                        storageRef.child(
+                                                            "images/${DateTime.now().millisecondsSinceEpoch}.png");
+                                                    final uploadTask = imagesRef
+                                                        .putFile(image!);
+                                                    await uploadTask
+                                                        .whenComplete(() async {
+                                                      imgUrl = await imagesRef
+                                                          .getDownloadURL();
+                                                    });
+
+                                                    if (imgUrl != "") {
+                                                      sendRequest(
+                                                        context,
+                                                        userId,
+                                                        packageTypeList[
+                                                            _selectedIndex],
+                                                        _selectedOption!,
+                                                        imgUrl,
+                                                        _currentLatLng!,
+                                                        _destination!,
+                                                        _driverIds,
+                                                        estimatedPrice,
+                                                      );
+                                                    } else {
+                                                      _showToast(
+                                                        context,
+                                                        "retry to add package photo",
+                                                      );
+                                                    }
                                                   } else {
                                                     _showToast(
                                                       context,
-                                                      "retry to add package photo",
+                                                      "Add package photo to continue",
                                                     );
                                                   }
                                                 } else {
                                                   _showToast(
                                                     context,
-                                                    "Add package photo to continue",
+                                                    "Add destination please",
                                                   );
                                                 }
                                               } else {
