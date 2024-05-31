@@ -1,4 +1,5 @@
 import 'package:cargo_app/auth/home.dart';
+import 'package:cargo_app/nonAuth/login.dart';
 import 'package:cargo_app/nonAuth/siginup.dart';
 import 'package:flutter/material.dart';
 
@@ -11,7 +12,7 @@ class Wrapper extends StatelessWidget {
     if (isSignedIn) {
       return const HomePage();
     } else {
-      return const RegistrationPage();
+      return const LoginPage();
     }
   }
 }

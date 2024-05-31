@@ -43,3 +43,56 @@ class Driver {
     );
   }
 }
+
+
+
+// StreamBuilder<Object>(
+//                               stream: driversCollection.snapshots(),
+//                               builder: (context, snapshot) {
+//                                 if (snapshot.hasError) {
+//                                   return Center(
+//                                       child: Text('Error: ${snapshot.error}'));
+//                                 }
+//                                 if (snapshot.connectionState ==
+//                                     ConnectionState.waiting) {
+//                                   return const Center(
+//                                       child: CircularProgressIndicator());
+//                                 }
+
+//                                 if (!snapshot.hasData ||
+//                                     snapshot.data == null) {
+//                                   return const Center(
+//                                       child: Text('No data available'));
+//                                 }
+
+//                                 // Explicitly cast snapshot.data to QuerySnapshot
+//                                 final QuerySnapshot querySnapshot =
+//                                     snapshot.data as QuerySnapshot;
+
+//                                 final drivers = querySnapshot.docs.map((doc) {
+//                                   return Driver.fromDocument(doc);
+//                                 }).toList();
+//                                 return ListView.builder(
+//                                   scrollDirection: Axis.horizontal,
+//                                   itemCount: drivers.length,
+//                                   itemBuilder: (context, index) {
+//                                     return DriverCard(
+//                                       truckSize: drivers[index].truckSize,
+//                                       estimatedPrice: estimatedPrice,
+//                                       truckType: drivers[index].truckType,
+//                                       isLoading: isLoading,
+//                                       onpress: () {
+//                                         Navigator.push(
+//                                           context,
+//                                           MaterialPageRoute(
+//                                             builder: (context) =>
+//                                                 DriverInfoPage(
+//                                                     id: drivers[index]
+//                                                         .driverId),
+//                                           ),
+//                                         );
+//                                       },
+//                                     );
+//                                   },
+//                                 );
+//                               }),

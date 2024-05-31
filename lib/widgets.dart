@@ -163,6 +163,7 @@ class DriverCard extends StatelessWidget {
   final double estimatedPrice;
   final String truckType;
   final bool isLoading;
+  final double bidPrice;
   const DriverCard({
     super.key,
     required this.onpress,
@@ -170,6 +171,7 @@ class DriverCard extends StatelessWidget {
     required this.estimatedPrice,
     required this.truckType,
     required this.isLoading,
+    required this.bidPrice,
   });
 
   @override
@@ -307,11 +309,19 @@ class DriverCard extends StatelessWidget {
               ),
               child: Center(
                 child: (!isLoading)
-                    ? Text(
-                        "Request",
-                        style: TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold),
-                      )
+                    ? (bidPrice > 0)
+                        ? Text(
+                            "Request",
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold),
+                          )
+                        : Text(
+                            "Waiting...",
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold),
+                          )
                     : CircularProgressIndicator(
                         color: Colors.white,
                       ),

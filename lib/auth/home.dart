@@ -7,16 +7,19 @@ import 'package:cargo_app/auth/account.dart';
 import 'package:cargo_app/auth/driver_info.dart';
 import 'package:cargo_app/auth/history.dart';
 import 'package:cargo_app/auth/location_search.dart';
+import 'package:cargo_app/auth/notification.dart';
 import 'package:cargo_app/models/driver.dart';
 import 'package:cargo_app/nonAuth/login.dart';
 import 'package:cargo_app/services/firebase_services.dart';
 import 'package:cargo_app/services/provider.dart';
 import 'package:cargo_app/widgets.dart';
+import 'package:cargo_app/wrapper.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:geocoding/geocoding.dart';
@@ -65,6 +68,7 @@ class _HomePageState extends State<HomePage> {
   List<Marker> _markers = [];
   List<String> _driverIds = [];
   final double estimatedPrice = 5000.0;
+  Map<String, Map<String, dynamic>> requestedDrivers = {};
 
   String requestdocId = "";
 
@@ -223,9 +227,9 @@ class _HomePageState extends State<HomePage> {
       String packageType,
       String packageSize,
       String pictureUrl,
-      LatLng currentLocation,
+      GeoPoint currentLocation,
       String destination,
-      List<String> drivers,
+      Map<String, dynamic> drivers,
       double price) async {
     try {
       setState(() {
@@ -237,12 +241,9 @@ class _HomePageState extends State<HomePage> {
         'packageType': packageType,
         'packageSize': packageSize,
         'pictureUrl': pictureUrl,
-        'currentLocation': {
-          'latitude': currentLocation.latitude,
-          'longitude': currentLocation.longitude,
-        },
+        'clientCurrentLocation': currentLocation,
         'destination': destination, // Empty for now
-        'driverId': drivers,
+        'driversRequested': drivers,
         'estimatedPrice': price,
         'isPickedUp': false,
         'requestTime': Timestamp.now(),
@@ -272,6 +273,11 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadDriverIds() async {
     List<String> driverIds = await fetchAllDriverIds();
+
+    for (var driverId in driverIds) {
+      requestedDrivers[driverId] = {'bidPrice': 0, 'isSelected': false};
+    }
+
     setState(() {
       _driverIds = driverIds;
     });
@@ -324,11 +330,58 @@ class _HomePageState extends State<HomePage> {
 
 /////////////////////////////////////////////////////
 
+  Future<List<Map<String, dynamic>>> _mapRequestDriverData() async {
+    // Fetch drivers from Drivers collection
+    QuerySnapshot driverSnapshot = await _firestore.collection('Drivers').get();
+
+    // Fetch the most recent request from Requests collection
+    QuerySnapshot requestSnapshot = await _firestore
+        .collection('Requests')
+        .orderBy('requestTime', descending: true)
+        .limit(1)
+        .get();
+    if (requestSnapshot.docs.isEmpty) {
+      return [];
+    }
+    var requestDoc = requestSnapshot.docs.first;
+
+    // Extract the driversRequested map from the most recent request document
+    Map<String, dynamic> driversRequested = requestDoc['driversRequested'];
+
+    // Convert snapshots to model instances
+    List<Driver> drivers =
+        driverSnapshot.docs.map((doc) => Driver.fromDocument(doc)).toList();
+
+    // Create a map to store bidPrice for each driverId
+    Map<String, double> driverBidPrices = {};
+
+    // Filter driver data and combine with bid prices
+    for (var driver in drivers) {
+      double bidPrice = (driversRequested[driver.driverId]
+                  as Map<String, dynamic>?)?['bidPrice']
+              ?.toDouble() ??
+          0.0;
+      driverBidPrices[driver.driverId] = bidPrice;
+    }
+
+    // Combine driver data with bid prices
+    List<Map<String, dynamic>> combinedData = drivers.map((driver) {
+      double bidPrice = driverBidPrices[driver.driverId] ?? 0.0;
+      return {
+        'driver': driver,
+        'bidPrice': bidPrice,
+      };
+    }).toList();
+
+    return combinedData;
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
     _mapController.dispose();
     _determinePosition();
+    _loadDriverIds();
     super.dispose();
   }
 
@@ -342,9 +395,19 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         actions: [
-          const Padding(
+          Padding(
             padding: EdgeInsets.all(8.0),
-            child: Icon(Icons.notifications),
+            child: IconButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => NotificationPage(),
+                  ),
+                );
+              },
+              icon: Icon(Icons.notifications),
+            ),
           ),
         ],
       ),
@@ -352,77 +415,113 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: Colors.white,
         child: SafeArea(
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              Container(
-                height: 100.0,
-                padding:
-                    const EdgeInsets.symmetric(vertical: 20, horizontal: 15),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                ),
-                child: FutureBuilder(
-                  future: getDocument(),
-                  builder: (context, AsyncSnapshot<DocumentSnapshot> snapshot) {
-                    if (snapshot.connectionState == ConnectionState.done) {
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const CircleAvatar(
-                            radius: 26,
-                          ),
-                          Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 8.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(snapshot.data!['username']),
-                                Text("+255" + snapshot.data?['phone'])
-                              ],
-                            ),
-                          ),
-                        ],
+              Column(
+                children: [
+                  Container(
+                    height: 100.0,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 20, horizontal: 15),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                    ),
+                    child: FutureBuilder(
+                      future: getDocument(),
+                      builder:
+                          (context, AsyncSnapshot<DocumentSnapshot> snapshot) {
+                        if (snapshot.connectionState == ConnectionState.done) {
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const CircleAvatar(
+                                radius: 26,
+                              ),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(snapshot.data!['username']),
+                                    Text("+255" + snapshot.data?['phone'])
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                        } else if (snapshot.connectionState ==
+                            ConnectionState.none) {
+                          return const Text("No data");
+                        }
+                        return const Center(child: CircularProgressIndicator());
+                      },
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.person),
+                    title: const Text('My Account'),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AccountPage(),
+                        ),
                       );
-                    } else if (snapshot.connectionState ==
-                        ConnectionState.none) {
-                      return const Text("No data");
-                    }
-                    return const Center(child: CircularProgressIndicator());
-                  },
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.lock_clock),
+                    title: const Text('My Rides'),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const RidesHistoryPage(),
+                        ),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.info),
+                    title: const Text('About'),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AboutPage(),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              MaterialButton(
+                elevation: 0,
+                color: Colors.blue,
+                height: 55,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.logout,
+                      color: Colors.white,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18.0),
+                      child: Text(
+                        "LogOut",
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.person),
-                title: const Text('My Account'),
-                onTap: () {
+                onPressed: () async {
+                  auth.signOutUser();
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const AccountPage(),
-                    ),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.lock_clock),
-                title: const Text('My Rides'),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const RidesHistoryPage(),
-                    ),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.info),
-                title: const Text('About'),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const AboutPage(),
+                      builder: (context) => Wrapper(isSignedIn: false),
                     ),
                   );
                 },
@@ -437,7 +536,7 @@ class _HomePageState extends State<HomePage> {
               ? const Center(child: CircularProgressIndicator())
               : GoogleMap(
                   mapType: MapType.normal,
-
+                  zoomControlsEnabled: false,
                   onMapCreated: (GoogleMapController controller) {
                     _mapController = controller;
                     controller.setMapStyle(_mapStyle);
@@ -628,56 +727,62 @@ class _HomePageState extends State<HomePage> {
                       ? SizedBox(
                           width: double.infinity,
                           height: 150,
-                          child: StreamBuilder<Object>(
-                              stream: driversCollection.snapshots(),
-                              builder: (context, snapshot) {
-                                if (snapshot.hasError) {
-                                  return Center(
-                                      child: Text('Error: ${snapshot.error}'));
-                                }
-                                if (snapshot.connectionState ==
-                                    ConnectionState.waiting) {
-                                  return const Center(
-                                      child: CircularProgressIndicator());
-                                }
-
-                                if (!snapshot.hasData ||
-                                    snapshot.data == null) {
-                                  return const Center(
-                                      child: Text('No data available'));
-                                }
-
-                                // Explicitly cast snapshot.data to QuerySnapshot
-                                final QuerySnapshot querySnapshot =
-                                    snapshot.data as QuerySnapshot;
-
-                                final drivers = querySnapshot.docs.map((doc) {
-                                  return Driver.fromDocument(doc);
-                                }).toList();
+                          child: FutureBuilder<List<Map<String, dynamic>>>(
+                            future: _mapRequestDriverData(),
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                                return Center(
+                                    child: CircularProgressIndicator());
+                              } else if (snapshot.hasError) {
+                                return Center(
+                                    child: Text('Error: ${snapshot.error}'));
+                              } else if (!snapshot.hasData ||
+                                  snapshot.data!.isEmpty) {
+                                return Center(child: Text('No drivers found'));
+                              } else {
+                                var data = snapshot.data!;
                                 return ListView.builder(
                                   scrollDirection: Axis.horizontal,
-                                  itemCount: drivers.length,
+                                  itemCount: data.length,
                                   itemBuilder: (context, index) {
+                                    var driverData = data[index];
+                                    var driver = driverData['driver'] as Driver;
+                                    var bidPrice =
+                                        driverData['bidPrice'] as double;
+
                                     return DriverCard(
-                                      truckSize: drivers[index].truckSize,
-                                      estimatedPrice: estimatedPrice,
-                                      truckType: drivers[index].truckType,
+                                      truckSize: driver.truckSize,
+                                      estimatedPrice: bidPrice,
+                                      truckType: driver.truckType,
                                       isLoading: isLoading,
+                                      bidPrice: bidPrice,
                                       onpress: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                DriverInfoPage(
-                                                    id: drivers[index]
-                                                        .driverId),
-                                          ),
-                                        );
+                                        if (bidPrice > 0) {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) =>
+                                                  DriverInfoPage(
+                                                      id: driver.driverId),
+                                            ),
+                                          );
+                                        } else {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                  'Waiting for Driver to bid'),
+                                            ),
+                                          );
+                                        }
                                       },
                                     );
                                   },
                                 );
-                              }),
+                              }
+                            },
+                          ),
                         )
                       : const SizedBox(),
                 ],
@@ -978,6 +1083,9 @@ class _HomePageState extends State<HomePage> {
                                             elevation: 0,
                                             color: Colors.blue,
                                             onPressed: () async {
+                                              GeoPoint geoPoint = GeoPoint(
+                                                  _currentLatLng!.latitude,
+                                                  _currentLatLng!.longitude);
                                               if (userId != "") {
                                                 if (_destination != null) {
                                                   if (image != null) {
@@ -1007,9 +1115,9 @@ class _HomePageState extends State<HomePage> {
                                                             _selectedIndex],
                                                         _selectedOption!,
                                                         imgUrl,
-                                                        _currentLatLng!,
+                                                        geoPoint,
                                                         _destination!,
-                                                        _driverIds,
+                                                        requestedDrivers,
                                                         estimatedPrice,
                                                       );
                                                     } else {
