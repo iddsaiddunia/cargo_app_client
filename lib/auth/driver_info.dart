@@ -1,14 +1,26 @@
+import 'dart:convert';
+
 import 'package:cargo_app/widgets.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
 
 class DriverInfoPage extends StatefulWidget {
   final String id;
-  const DriverInfoPage({super.key, required this.id});
+  final String requestId;
+  final LatLng destination;
+  const DriverInfoPage({
+    super.key,
+    required this.id,
+    required this.requestId,
+    required this.destination,
+  });
 
   @override
   State<DriverInfoPage> createState() => _DriverInfoPageState();
@@ -20,7 +32,12 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
   late Position _currentPosition;
   LatLng? _currentLatLng;
   late GoogleMapController _mapController;
-
+  bool _isPickedUp = false;
+  final Set<Marker> _markers = {};
+  final String apiKey =
+      'AIzaSyAjsJbodhou5nNntMWPdhRsWqz2h1Tgzoc'; // Replace with your API key
+  Set<Polyline> _polylines = {};
+  final PolylinePoints _polylinePoints = PolylinePoints();
 
   @override
   void initState() {
@@ -36,6 +53,7 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
     bool serviceEnabled;
     LocationPermission permission;
 
+    print("${widget.destination} -----<<<");
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       return Future.error('Location services are disabled.');
@@ -80,8 +98,91 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
           target: _currentLatLng!,
           zoom: 15.0,
         )));
+
+        _drawRoute(_currentLatLng!, widget.destination);
       }
     });
+  }
+
+  Future<void> updateRequestPickupStatus(String requestId) async {
+    try {
+      // Reference to the specific request document
+      DocumentReference requestDocRef =
+          FirebaseFirestore.instance.collection('Requests').doc(requestId);
+
+      // Update the isPickedUp field to true
+      await requestDocRef.update({
+        'isPickedUp': true,
+      });
+
+      print('Request updated successfully.');
+    } catch (e) {
+      print('Failed to update request: $e');
+    }
+  }
+
+  Future<void> _drawRoute(LatLng start, LatLng end) async {
+    final String url =
+        'https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}&key=$apiKey';
+
+    final response = await http.get(Uri.parse(url));
+    final data = json.decode(response.body);
+
+    if (data['status'] == 'OK') {
+      final polylinePoints = data['routes'][0]['overview_polyline']['points'];
+
+      List<PointLatLng> result = _polylinePoints.decodePolyline(polylinePoints);
+
+      setState(() {
+        _polylines.add(Polyline(
+          polylineId: PolylineId('route'),
+          points: result
+              .map((point) => LatLng(point.latitude, point.longitude))
+              .toList(),
+          color: Colors.blue,
+          width: 5,
+        ));
+      });
+    } else {
+      print('Failed to load directions');
+    }
+  }
+
+  void _showPhonePopup(BuildContext context, String phoneNumber) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Phone Number'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(phoneNumber),
+              SizedBox(height: 10),
+              // ElevatedButton(
+              //   onPressed: () {
+              //     Clipboard.setData(ClipboardData(text: phoneNumber));
+              //     ScaffoldMessenger.of(context).showSnackBar(
+              //       SnackBar(
+              //         content: Text('Phone number copied to clipboard'),
+              //       ),
+              //     );
+              //   },
+              //   child: Text('Copy Number'),
+              // ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -121,14 +222,15 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
                       ),
                       myLocationEnabled: true,
                       myLocationButtonEnabled: true,
-                      // markers: _destination != null
-                      //     ? {
-                      //         Marker(
-                      //           markerId: MarkerId('destination'),
-                      //           position: _destination,
-                      //         ),
-                      //       }
-                      //     : {},
+                      polylines: _polylines,
+                      markers: widget.destination != null
+                          ? {
+                              Marker(
+                                  markerId: MarkerId('destination'),
+                                  position: widget.destination,
+                                  infoWindow: InfoWindow(title: "Destination")),
+                            }
+                          : {},
                       // polylines: _destination != null
                       //     ? {
                       //         Polyline(
@@ -219,18 +321,23 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
                                   )
                                 ],
                               ),
-                              Container(
-                                width: 35,
-                                height: 35,
-                                decoration: const BoxDecoration(
-                                  color: Colors.blue,
-                                  borderRadius:
-                                      BorderRadius.all(Radius.circular(35)),
-                                ),
-                                child: const Icon(
-                                  Icons.phone,
-                                  size: 18,
-                                  color: Colors.white,
+                              GestureDetector(
+                                onTap: () {
+                                  _showPhonePopup(context, driverData['phone']);
+                                },
+                                child: Container(
+                                  width: 35,
+                                  height: 35,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.blue,
+                                    borderRadius:
+                                        BorderRadius.all(Radius.circular(35)),
+                                  ),
+                                  child: const Icon(
+                                    Icons.phone,
+                                    size: 18,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               )
                             ],
@@ -265,24 +372,65 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
                               ),
                             ],
                           ),
-                          Container(
-                            width: 200.0,
-                            height: 45,
-                            margin: EdgeInsets.symmetric(vertical: 30.0),
-                            decoration: const BoxDecoration(
-                              color: Color.fromARGB(255, 82, 82, 82),
-                              borderRadius:
-                                  BorderRadius.all(Radius.circular(5)),
-                            ),
-                            child: const Center(
-                              child: Text(
-                                "Cancel Pickup",
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ),
+                          (!_isPickedUp)
+                              ? GestureDetector(
+                                  onTap: () async {
+                                    await updateRequestPickupStatus(
+                                        widget.requestId);
+                                    setState(() {
+                                      _isPickedUp = true;
+                                    });
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                            'Request pickup status updated successfully.'),
+                                      ),
+                                    );
+                                  },
+                                  child: Container(
+                                    width: 200.0,
+                                    height: 45,
+                                    margin:
+                                        EdgeInsets.symmetric(vertical: 30.0),
+                                    decoration: const BoxDecoration(
+                                      color: Color.fromARGB(255, 82, 82, 82),
+                                      borderRadius:
+                                          BorderRadius.all(Radius.circular(5)),
+                                    ),
+                                    child: const Center(
+                                      child: Text(
+                                        "Confirm Pickup",
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : GestureDetector(
+                                  onTap: () {
+                                    _showConfirmationDialog(context, true);
+                                  },
+                                  child: Container(
+                                    width: 200.0,
+                                    height: 45,
+                                    margin:
+                                        EdgeInsets.symmetric(vertical: 30.0),
+                                    decoration: const BoxDecoration(
+                                      color: Color.fromARGB(255, 82, 82, 82),
+                                      borderRadius:
+                                          BorderRadius.all(Radius.circular(5)),
+                                    ),
+                                    child: const Center(
+                                      child: Text(
+                                        "Confirm Arrival",
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                         ],
                       );
                     }),
@@ -303,5 +451,63 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
         ),
       ]),
     );
+  }
+
+  Future<void> _showConfirmationDialog(
+      BuildContext context, bool newStatus) async {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(newStatus ? 'Mark as Arrived?' : 'Mark as Not Arrived?'),
+          content: Text(
+            newStatus
+                ? 'Are you sure you want to mark this request as arrived?'
+                : 'Are you sure you want to mark this request as not arrived?',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close the dialog
+              },
+              child: Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await updateClientArrivalStatus(widget.requestId, newStatus);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      newStatus
+                          ? 'Client arrival status updated to arrived.'
+                          : 'Client arrival status updated to not arrived.',
+                    ),
+                  ),
+                );
+                Navigator.of(context).pop(); // Close the dialog
+                Navigator.pop(context); // Navigate back after update
+              },
+              child: Text('Confirm'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> updateClientArrivalStatus(
+      String requestId, bool newStatus) async {
+    try {
+      DocumentReference requestDocRef =
+          FirebaseFirestore.instance.collection('Requests').doc(requestId);
+
+      await requestDocRef.update({
+        'clientArrivalStatus': newStatus,
+      });
+
+      print('Client arrival status updated successfully.');
+    } catch (e) {
+      print('Failed to update client arrival status: $e');
+    }
   }
 }

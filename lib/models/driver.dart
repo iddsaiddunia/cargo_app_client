@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class Driver {
   final GeoPoint currentLocation;
@@ -42,57 +41,19 @@ class Driver {
       username: data['username'],
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'currentLocation': currentLocation,
+      'driverId': driverId,
+      'isAvailable': isAvailable,
+      'phone': phone,
+      'ratings': ratings,
+      'truckRegistration': truckRegistration,
+      'truckModel': truckModel,
+      'truckSize': truckSize,
+      'truckType': truckType,
+      'username': username,
+    };
+  }
 }
-
-
-
-// StreamBuilder<Object>(
-//                               stream: driversCollection.snapshots(),
-//                               builder: (context, snapshot) {
-//                                 if (snapshot.hasError) {
-//                                   return Center(
-//                                       child: Text('Error: ${snapshot.error}'));
-//                                 }
-//                                 if (snapshot.connectionState ==
-//                                     ConnectionState.waiting) {
-//                                   return const Center(
-//                                       child: CircularProgressIndicator());
-//                                 }
-
-//                                 if (!snapshot.hasData ||
-//                                     snapshot.data == null) {
-//                                   return const Center(
-//                                       child: Text('No data available'));
-//                                 }
-
-//                                 // Explicitly cast snapshot.data to QuerySnapshot
-//                                 final QuerySnapshot querySnapshot =
-//                                     snapshot.data as QuerySnapshot;
-
-//                                 final drivers = querySnapshot.docs.map((doc) {
-//                                   return Driver.fromDocument(doc);
-//                                 }).toList();
-//                                 return ListView.builder(
-//                                   scrollDirection: Axis.horizontal,
-//                                   itemCount: drivers.length,
-//                                   itemBuilder: (context, index) {
-//                                     return DriverCard(
-//                                       truckSize: drivers[index].truckSize,
-//                                       estimatedPrice: estimatedPrice,
-//                                       truckType: drivers[index].truckType,
-//                                       isLoading: isLoading,
-//                                       onpress: () {
-//                                         Navigator.push(
-//                                           context,
-//                                           MaterialPageRoute(
-//                                             builder: (context) =>
-//                                                 DriverInfoPage(
-//                                                     id: drivers[index]
-//                                                         .driverId),
-//                                           ),
-//                                         );
-//                                       },
-//                                     );
-//                                   },
-//                                 );
-//                               }),

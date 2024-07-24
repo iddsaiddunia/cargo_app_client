@@ -137,6 +137,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
             'username': usernameController.text.trim(),
             'phone': phoneController.text.trim(),
           });
+          _showToast(context, "successfully registered user");
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -146,6 +147,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
           setState(() {
             isLoading = false;
           });
+        } else {
+          setState(() {
+            isLoading = false;
+          });
+          _showToast(context, "Failed to register user");
         }
       } else {
         setState(() {

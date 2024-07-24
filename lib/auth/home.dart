@@ -1,7 +1,6 @@
-import 'dart:ffi';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:math';
-
 import 'package:cargo_app/auth/about.dart';
 import 'package:cargo_app/auth/account.dart';
 import 'package:cargo_app/auth/driver_info.dart';
@@ -45,15 +44,16 @@ class _HomePageState extends State<HomePage> {
   late String _mapStyle;
   bool isDrawerOpen = false;
   late GoogleMapController _mapController;
-  final _destinationController = TextEditingController();
-  final _currentLocationController = TextEditingController();
+  // final _destinationController = TextEditingController();
+  // final _currentLocationController = TextEditingController();
   bool isPackageDetailsFilled = false;
   int _selectedIndex = 0;
-  String? _selectedOption = "1 - 0.9";
+  String? _selectedOption = "bajaj";
   bool isPhotoTaken = false;
   bool isLoading = false;
+  double _distance = 0.0;
   String? _destination;
-  LatLng? _selectedLocation;
+  LatLng? _selectedLocation = LatLng(0, 0);
   late Position _currentPosition;
   LatLng? _currentLatLng;
   static const maxSeconds = 60;
@@ -67,8 +67,9 @@ class _HomePageState extends State<HomePage> {
   final FirestoreService _firestoreService = FirestoreService();
   List<Marker> _markers = [];
   List<String> _driverIds = [];
-  final double estimatedPrice = 5000.0;
+  double estimatedPrice = 0.0;
   Map<String, Map<String, dynamic>> requestedDrivers = {};
+  // late Future<List<Map<String, dynamic>>> _fetchedDri;
 
   String requestdocId = "";
 
@@ -112,6 +113,22 @@ class _HomePageState extends State<HomePage> {
     _loadDriverIds();
   }
 
+  _calculateCost() {
+    if (_selectedOption == "bajaj") {
+      setState(() {
+        estimatedPrice = 1000 * _distance;
+      });
+    } else if (_selectedOption == "kirikuu") {
+      setState(() {
+        estimatedPrice = 1500 * _distance;
+      });
+    } else if (_selectedOption == "canter") {
+      setState(() {
+        estimatedPrice = 2500 * _distance;
+      });
+    }
+  }
+
   Future<void> _getLatLngFromAddress(String address) async {
     try {
       List<Location> locations = await locationFromAddress(address);
@@ -124,6 +141,25 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       print('Error occurred while converting address to LatLng: $e');
     }
+  }
+
+  double calculateDistance(LatLng start, LatLng end) {
+    const double earthRadius = 6371; // Radius of the Earth in kilometers
+    final double dLat = _toRadians(end.latitude - start.latitude);
+    final double dLng = _toRadians(end.longitude - start.longitude);
+
+    final double a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(start.latitude)) *
+            math.cos(_toRadians(end.latitude)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+
+    final double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadius * c;
+  }
+
+  double _toRadians(double degree) {
+    return degree * math.pi / 180;
   }
 
   Future<void> _determinePosition() async {
@@ -242,7 +278,8 @@ class _HomePageState extends State<HomePage> {
         'packageSize': packageSize,
         'pictureUrl': pictureUrl,
         'clientCurrentLocation': currentLocation,
-        'destination': destination, // Empty for now
+        'destination': destination,
+        'driverPickup': false,
         'driversRequested': drivers,
         'estimatedPrice': price,
         'isPickedUp': false,
@@ -331,49 +368,95 @@ class _HomePageState extends State<HomePage> {
 /////////////////////////////////////////////////////
 
   Future<List<Map<String, dynamic>>> _mapRequestDriverData() async {
+    if (_currentLatLng == null) {
+      return [];
+    }
+
     // Fetch drivers from Drivers collection
-    QuerySnapshot driverSnapshot = await _firestore.collection('Drivers').get();
+    QuerySnapshot driverSnapshot =
+        await FirebaseFirestore.instance.collection('Drivers').get();
 
     // Fetch the most recent request from Requests collection
-    QuerySnapshot requestSnapshot = await _firestore
+    QuerySnapshot requestSnapshot = await FirebaseFirestore.instance
         .collection('Requests')
         .orderBy('requestTime', descending: true)
         .limit(1)
         .get();
+
     if (requestSnapshot.docs.isEmpty) {
       return [];
     }
+
     var requestDoc = requestSnapshot.docs.first;
 
     // Extract the driversRequested map from the most recent request document
     Map<String, dynamic> driversRequested = requestDoc['driversRequested'];
 
-    // Convert snapshots to model instances
-    List<Driver> drivers =
-        driverSnapshot.docs.map((doc) => Driver.fromDocument(doc)).toList();
-
     // Create a map to store bidPrice for each driverId
     Map<String, double> driverBidPrices = {};
 
     // Filter driver data and combine with bid prices
-    for (var driver in drivers) {
+    List<Map<String, dynamic>> combinedData = [];
+    for (var driverDoc in driverSnapshot.docs) {
+      Driver driver = Driver.fromDocument(driverDoc);
       double bidPrice = (driversRequested[driver.driverId]
                   as Map<String, dynamic>?)?['bidPrice']
               ?.toDouble() ??
           0.0;
       driverBidPrices[driver.driverId] = bidPrice;
+
+      // Calculate the distance between the current location and the driver's location
+      double distance = _calculateDistance(
+        _currentLatLng!.latitude,
+        _currentLatLng!.longitude,
+        driver.currentLocation.latitude,
+        driver.currentLocation.longitude,
+      );
+
+      // Check if the driver is within 500 meters
+      // if (distance <= 0.1) {
+      //   combinedData.add({
+      //     'driver': driver.toJson(),
+      //     'bidPrice': bidPrice,
+      //     'request': requestDoc.data()
+      //         as Map<String, dynamic>, // Add the whole request document data
+      //     'requestId': requestDoc.id, // Add the request document ID
+      //   });
+      // }
+      combinedData.add({
+        'driver': driver.toJson(),
+        'bidPrice': bidPrice,
+        'request': requestDoc.data()
+            as Map<String, dynamic>, // Add the whole request document data
+        'requestId': requestDoc.id, // Add the request document ID
+      });
     }
 
-    // Combine driver data with bid prices
-    List<Map<String, dynamic>> combinedData = drivers.map((driver) {
-      double bidPrice = driverBidPrices[driver.driverId] ?? 0.0;
-      return {
-        'driver': driver,
-        'bidPrice': bidPrice,
-      };
-    }).toList();
+    print(combinedData);
 
     return combinedData;
+  }
+
+// Function to calculate the distance between two geographic points using the Haversine formula
+  double _calculateDistance(
+      double lat1, double lon1, double lat2, double lon2) {
+    const double R = 6371; // Radius of the Earth in kilometers
+    double dLat = _degToRad(lat2 - lat1);
+    double dLon = _degToRad(lon2 - lon1);
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_degToRad(lat1)) *
+            cos(_degToRad(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    double distance = R * c; // Distance in kilometers
+
+    return distance;
+  }
+
+// Function to convert degrees to radians
+  double _degToRad(double deg) {
+    return deg * (pi / 180);
   }
 
   @override
@@ -394,21 +477,22 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
+        title: Text("Cargo App"),
         actions: [
-          Padding(
-            padding: EdgeInsets.all(8.0),
-            child: IconButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => NotificationPage(),
-                  ),
-                );
-              },
-              icon: Icon(Icons.notifications),
-            ),
-          ),
+          // Padding(
+          //   padding: EdgeInsets.all(8.0),
+          //   child: IconButton(
+          //     onPressed: () {
+          //       Navigator.push(
+          //         context,
+          //         MaterialPageRoute(
+          //           builder: (context) => NotificationPage(),
+          //         ),
+          //       );
+          //     },
+          //     icon: Icon(Icons.notifications),
+          //   ),
+          // ),
         ],
       ),
       drawer: Drawer(
@@ -482,18 +566,18 @@ class _HomePageState extends State<HomePage> {
                       );
                     },
                   ),
-                  ListTile(
-                    leading: const Icon(Icons.info),
-                    title: const Text('About'),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const AboutPage(),
-                        ),
-                      );
-                    },
-                  ),
+                  // ListTile(
+                  //   leading: const Icon(Icons.info),
+                  //   title: const Text('About'),
+                  //   onTap: () {
+                  //     Navigator.push(
+                  //       context,
+                  //       MaterialPageRoute(
+                  //         builder: (context) => const AboutPage(),
+                  //       ),
+                  //     );
+                  //   },
+                  // ),
                 ],
               ),
               MaterialButton(
@@ -689,7 +773,7 @@ class _HomePageState extends State<HomePage> {
                           child: Container(
                             width: double.infinity,
                             padding: const EdgeInsets.all(8.0),
-                            height: 160,
+                            height: 200,
                             decoration:
                                 const BoxDecoration(color: Colors.white),
                             child: Column(
@@ -717,6 +801,18 @@ class _HomePageState extends State<HomePage> {
                                         isPackageDetailsFilled = false;
                                       });
                                     }),
+                                MaterialButton(
+                                    elevation: 0,
+                                    minWidth: double.infinity,
+                                    height: 45,
+                                    child: const Text("Refresh Driver status"),
+                                    // color: Colors.blue,
+                                    textColor: Colors.black,
+                                    onPressed: () {
+                                      setState(() {
+                                        _mapRequestDriverData();
+                                      });
+                                    }),
                               ],
                             ),
                           ),
@@ -733,28 +829,31 @@ class _HomePageState extends State<HomePage> {
                               if (snapshot.connectionState ==
                                   ConnectionState.waiting) {
                                 return Center(
-                                    child: CircularProgressIndicator());
+                                  child: CircularProgressIndicator(),
+                                );
                               } else if (snapshot.hasError) {
                                 return Center(
                                     child: Text('Error: ${snapshot.error}'));
                               } else if (!snapshot.hasData ||
                                   snapshot.data!.isEmpty) {
-                                return Center(child: Text('No drivers found'));
+                                return Center(
+                                    child: Text('No NearBy drivers found'));
                               } else {
-                                var data = snapshot.data!;
+                                List<Map<String, dynamic>> data =
+                                    snapshot.data!;
                                 return ListView.builder(
                                   scrollDirection: Axis.horizontal,
                                   itemCount: data.length,
                                   itemBuilder: (context, index) {
-                                    var driverData = data[index];
-                                    var driver = driverData['driver'] as Driver;
-                                    var bidPrice =
-                                        driverData['bidPrice'] as double;
+                                    var driverData = data[index]['driver'];
+                                    var bidPrice = data[index]['bidPrice'];
+                                    var request = data[index]['request'];
+                                    var requestId = data[index]['requestId'];
 
                                     return DriverCard(
-                                      truckSize: driver.truckSize,
+                                      truckSize: driverData['truckSize'],
                                       estimatedPrice: bidPrice,
-                                      truckType: driver.truckType,
+                                      truckType: driverData['truckType'],
                                       isLoading: isLoading,
                                       bidPrice: bidPrice,
                                       onpress: () {
@@ -764,7 +863,11 @@ class _HomePageState extends State<HomePage> {
                                             MaterialPageRoute(
                                               builder: (context) =>
                                                   DriverInfoPage(
-                                                      id: driver.driverId),
+                                                      id: driverData[
+                                                          'driverId'],
+                                                      requestId: requestId,
+                                                      destination:
+                                                          _selectedLocation!),
                                             ),
                                           );
                                         } else {
@@ -772,7 +875,8 @@ class _HomePageState extends State<HomePage> {
                                               .showSnackBar(
                                             SnackBar(
                                               content: Text(
-                                                  'Waiting for Driver to bid'),
+                                                'Waiting for Driver to bid',
+                                              ),
                                             ),
                                           );
                                         }
@@ -839,9 +943,12 @@ class _HomePageState extends State<HomePage> {
                                       );
 
                                       if (result != null && result is String) {
-                                        _getLatLngFromAddress(result);
+                                        await _getLatLngFromAddress(result);
                                         setState(() {
                                           _destination = result;
+                                          _distance = calculateDistance(
+                                              _currentLatLng!,
+                                              _selectedLocation!);
                                         });
                                       }
                                     },
@@ -889,9 +996,19 @@ class _HomePageState extends State<HomePage> {
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(
-                                    height: 16,
-                                  ),
+                                  SizedBox(
+                                      height: 40,
+                                      child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text("Distance",
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                            Text(
+                                                "${_distance.toStringAsFixed(2)} Km"),
+                                          ])),
                                   const Text(
                                     "Package type",
                                     style: TextStyle(
@@ -938,7 +1055,7 @@ class _HomePageState extends State<HomePage> {
                                       Row(
                                         children: [
                                           Radio<String>(
-                                            value: '1 - 0.9',
+                                            value: 'bajaj',
                                             groupValue: _selectedOption,
                                             onChanged: (String? value) {
                                               setState(() {
@@ -963,7 +1080,7 @@ class _HomePageState extends State<HomePage> {
                                       Row(
                                         children: [
                                           Radio<String>(
-                                            value: '1 - 3',
+                                            value: 'kirikuu',
                                             groupValue: _selectedOption,
                                             onChanged: (String? value) {
                                               setState(() {
@@ -988,7 +1105,7 @@ class _HomePageState extends State<HomePage> {
                                       Row(
                                         children: [
                                           Radio<String>(
-                                            value: '4 - 7',
+                                            value: 'canter',
                                             groupValue: _selectedOption,
                                             onChanged: (String? value) {
                                               setState(() {
@@ -1009,26 +1126,26 @@ class _HomePageState extends State<HomePage> {
                                           ),
                                         ],
                                       ),
-                                      Row(
-                                        children: [
-                                          Radio<String>(
-                                            value: 'other',
-                                            groupValue: _selectedOption,
-                                            onChanged: (String? value) {
-                                              setState(() {
-                                                _selectedOption = value;
-                                              });
-                                            },
-                                          ),
-                                          const Text('other'),
-                                        ],
-                                      ),
-                                      (_selectedOption == "other")
-                                          ? const TextField(
-                                              decoration: InputDecoration(
-                                                  hintText: "specify size"),
-                                            )
-                                          : Container(),
+                                      // Row(
+                                      //   children: [
+                                      //     Radio<String>(
+                                      //       value: 'other',
+                                      //       groupValue: _selectedOption,
+                                      //       onChanged: (String? value) {
+                                      //         setState(() {
+                                      //           _selectedOption = value;
+                                      //         });
+                                      //       },
+                                      //     ),
+                                      //     const Text('other'),
+                                      //   ],
+                                      // ),
+                                      // (_selectedOption == "other")
+                                      //     ? const TextField(
+                                      //         decoration: InputDecoration(
+                                      //             hintText: "specify size"),
+                                      //       )
+                                      //     : Container(),
                                     ],
                                   ),
                                   const Divider(),
@@ -1054,9 +1171,18 @@ class _HomePageState extends State<HomePage> {
                                           child: const Icon(Icons.camera),
                                         ),
                                         (image == null)
-                                            ? const Text("Take package picture")
+                                            ? const Text(
+                                                "Take package picture",
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              )
                                             : const Text(
-                                                "Retake package picture")
+                                                "Retake package picture",
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              )
                                       ],
                                     ),
                                   ),
@@ -1071,8 +1197,27 @@ class _HomePageState extends State<HomePage> {
                                         : const Text('No image selected.'),
                                   ),
                                   const Divider(),
-                                  const SizedBox(
-                                    height: 5.0,
+                                  SizedBox(
+                                    height: 50.0,
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                            "Total Price: ${estimatedPrice.toStringAsFixed(2)} Tsh"),
+                                        MaterialButton(
+                                          onPressed: () {
+                                            _calculateCost();
+                                          },
+                                          child: Text(
+                                            "Generate Price",
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        )
+                                      ],
+                                    ),
                                   ),
                                   Align(
                                     alignment: Alignment.bottomCenter,
